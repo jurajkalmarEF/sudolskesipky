@@ -358,13 +358,17 @@ async function loadLegResults() {
     );
     if (error) throw new Error(error.message);
     // zoradené od najstaršieho po najnovší — posledný výskyt mena v cykle je teda jeho posledný záznam
+    // kľúče normalizujeme na malé písmená, nech párovanie mien nie je citlivé na veľkosť písmen
     const latest = {};
-    (data || []).forEach(r => { latest[r.player_name] = r.points; });
+    (data || []).forEach(r => {
+      if (r.player_name) latest[r.player_name.trim().toLowerCase()] = r.points;
+    });
 
     let filled = 0;
     selPlayers.forEach((n, i) => {
-      if (latest[n] !== undefined && latest[n] !== null) {
-        document.getElementById('p' + i).value = latest[n];
+      const key = n.trim().toLowerCase();
+      if (latest[key] !== undefined && latest[key] !== null) {
+        document.getElementById('p' + i).value = latest[key];
         filled++;
       }
     });
