@@ -161,6 +161,7 @@ select option{background:var(--navy2)}
       <table class="stbl"><thead><tr><th>#</th><th>Hráč</th><th>Body</th></tr></thead><tbody id="scoreBody"></tbody></table>
       <div id="scoreMsg" class="mt1"></div>
       <div class="flex g1 mt2" style="flex-wrap:wrap">
+        <button class="btn boutline" id="loadLegBtn" onclick="loadLegResults()">⬇️ Načítať výsledky</button>
         <button class="btn bgold" id="saveBtn" onclick="saveRound()">💾 Uložiť kolo</button>
         <button class="btn boutline" onclick="finishGame()">✅ Ukončiť deň</button>
         <button class="btn bdanger bsm" onclick="cancelGame()">Zrušiť</button>
@@ -347,6 +348,45 @@ function buildTable() {
   document.getElementById('saveBtn').disabled = false;
 }
 
+// ── NAČÍTANIE Z leg_results (posledný zápis pre každého hráča) ──
+async function loadLegResults() {
+  const msg = document.getElementById('scoreMsg');
+  msg.innerHTML = '<div class="spin"></div>';
+  try {
+    const { data, error } = await withRetry(() =>
+      sb.from('leg_results').select('player_name, points, created_at').order('created_at', { ascending: true })
+    );
+    if (error) throw new Error(error.message);
+    // zoradené od najstaršieho po najnovší — posledný výskyt mena v cykle je teda jeho posledný záznam
+    const latest = {};
+    (data || []).forEach(r => { latest[r.player_name] = r.points; });
+
+    let filled = 0;
+    selPlayers.forEach((n, i) => {
+      if (latest[n] !== undefined && latest[n] !== null) {
+        document.getElementById('p' + i).value = latest[n];
+        filled++;
+      }
+    });
+    msg.innerHTML = filled
+      ? `<div class="msg mok">Načítané body pre ${filled} hráčov z tabuľky leg_results.</div>`
+      : `<div class="msg minfo">V leg_results sa nenašli záznamy pre hráčov tohto kola.</div>`;
+  } catch (e) {
+    msg.innerHTML = `<div class="msg merr">Chyba načítania z leg_results: ${e.message}</div>`;
+  }
+}
+
+// Po úspešnom uložení kola vyprázdni leg_results (best-effort — chyba tu
+// neprekazí uloženie kola, len sa potichu zaloguje).
+async function clearLegResults() {
+  try {
+    const { error } = await sb.from('leg_results').delete().gte('id', 0);
+    if (error) console.warn('Nepodarilo sa vyprázdniť leg_results:', error.message);
+  } catch (e) {
+    console.warn('Nepodarilo sa vyprázdniť leg_results:', e.message);
+  }
+}
+
 // ── SAVE ROUND — všetky záznamy cez JSONP ──
 async function saveRound() {
   const scores = selPlayers.map((n,i) => ({ name: n, pts: parseInt(document.getElementById('p'+i).value)||0 }));
@@ -375,6 +415,7 @@ async function saveRound() {
     round++;
     buildTable();
     msg.innerHTML = `<div class="msg mok">✅ Kolo ${round-1} uložené! (${scores.length} hráčov)</div>`;
+    clearLegResults();
   } catch(e) {
     btn.disabled = false;
     msg.innerHTML = `<div class="msg merr">Chyba zápisu: ${e.message}</div>`;
