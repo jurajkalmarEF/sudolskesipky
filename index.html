@@ -527,3 +527,190 @@ function fmtD(d) { if (!d) return '—'; const p=d.split('-'); return p.length==
 </script>
 </body>
 </html>
+      
+<script>
+// === LIGY — doplnok (pridané dodatočne) ===
+let currentLeagueId = '', currentLeagueName = '';
+
+(function(){
+  const setupCard = document.querySelector('#gStep1 .card');
+  if (setupCard) {
+    const dateFg = setupCard.querySelector('.fg');
+    const div = document.createElement('div');
+    div.className = 'fg';
+    div.innerHTML = '<label>Liga</label>'
+      + '<select id="leagueSelect" onchange="onLeagueChange()"><option value="">Načítavam ligy...</option></select>'
+      + '<div id="newLeagueBox" style="display:none;margin-top:.5rem">'
+      + '<input type="text" id="newLeagueName" placeholder="Názov novej ligy">'
+      + '<button class="btn boutline bsm mt1" onclick="createLeague()">Vytvoriť ligu</button>'
+      + '</div>';
+    if (dateFg) dateFg.after(div); else setupCard.prepend(div);
+  }
+  const scorePage = document.getElementById('scorePage');
+  const sbContent = document.getElementById('sbContent');
+  if (scorePage && sbContent) {
+    const div = document.createElement('div');
+    div.className = 'fg';
+    div.innerHTML = '<label>Liga</label><select id="sbLeagueSelect" onchange="loadScoreboard()"><option value="">Načítavam ligy...</option></select>';
+    sbContent.before(div);
+    sbContent.addEventListener('click', function(ev){
+      const row = ev.target.closest('.srow');
+      if (row) showDetail(row.getAttribute('data-name'), row.getAttribute('data-enc'));
+    });
+  }
+})();
+
+async function loadLeagues(selectId) {
+  const sel = document.getElementById(selectId);
+  if (!sel) return;
+  try {
+    const { data, error } = await withRetry(() => sb.from('leagues').select('id,name').order('name'));
+    if (error) throw new Error(error.message);
+    const opts = ['<option value="">— vyberte ligu —</option>']
+      .concat((data || []).map(l => '<option value="' + l.id + '">' + l.name + '</option>'));
+    if (selectId === 'leagueSelect') opts.push('<option value="__new__">+ Nová liga...</option>');
+    sel.innerHTML = opts.join('');
+    if (selectId === 'leagueSelect' && currentLeagueId) sel.value = currentLeagueId;
+  } catch (e) {
+    sel.innerHTML = '<option value="">Chyba načítania líg</option>';
+  }
+}
+
+function onLeagueChange() {
+  const sel = document.getElementById('leagueSelect');
+  const box = document.getElementById('newLeagueBox');
+  if (sel.value === '__new__') {
+    box.style.display = 'block';
+    currentLeagueId = ''; currentLeagueName = '';
+  } else {
+    box.style.display = 'none';
+    currentLeagueId = sel.value;
+    currentLeagueName = sel.value ? sel.options[sel.selectedIndex].textContent : '';
+  }
+}
+
+async function createLeague() {
+  const nameInput = document.getElementById('newLeagueName');
+  const name = nameInput.value.trim();
+  const msg = document.getElementById('setupMsg');
+  if (!name) { msg.innerHTML = '<div class="msg merr">Zadajte názov ligy.</div>'; return; }
+  msg.innerHTML = '<div class="spin"></div>';
+  try {
+    const { data, error } = await withRetry(() => sb.from('leagues').insert({ name }).select('id,name').single());
+    if (error) throw new Error(error.message);
+    currentLeagueId = data.id; currentLeagueName = data.name;
+    await loadLeagues('leagueSelect');
+    document.getElementById('leagueSelect').value = currentLeagueId;
+    document.getElementById('newLeagueBox').style.display = 'none';
+    nameInput.value = '';
+    msg.innerHTML = '<div class="msg mok">Liga vytvorená a vybraná.</div>';
+  } catch (e) {
+    const dup = /duplicate|unique/i.test(e.message);
+    msg.innerHTML = '<div class="msg merr">' + (dup ? 'Liga s týmto názvom už existuje — vyberte ju zo zoznamu.' : 'Chyba: ' + e.message) + '</div>';
+  }
+}
+
+function showPage(id) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  if (id==='gamePage') { document.getElementById('navGame').classList.add('active'); if (!gameOn) { loadPlayers(); loadLeagues('leagueSelect'); } }
+  if (id==='scorePage') { document.getElementById('navScore').classList.add('active'); loadLeagues('sbLeagueSelect').then(loadScoreboard); }
+}
+
+function startGame() {
+  const date = document.getElementById('gameDate').value;
+  if (!date) { document.getElementById('setupMsg').innerHTML = '<div class="msg merr">Vyberte dátum.</div>'; return; }
+  if (!currentLeagueId) { document.getElementById('setupMsg').innerHTML = '<div class="msg merr">Vyberte alebo vytvorte ligu.</div>'; return; }
+  if (selPlayers.length < 2) { document.getElementById('setupMsg').innerHTML = '<div class="msg merr">Vyberte aspoň 2 hráčov.</div>'; return; }
+  gameDate = date; round = 1; rounds = []; gameOn = true;
+  document.getElementById('gStep1').style.display = 'none';
+  document.getElementById('gStep2').style.display = 'block';
+  document.getElementById('sDateLbl').textContent = 'Dátum: ' + fmtD(date) + ' · Liga: ' + currentLeagueName;
+  buildTable();
+}
+
+async function saveRound() {
+  const scores = selPlayers.map((n,i) => ({ name: n, pts: parseInt(document.getElementById('p'+i).value)||0 }));
+  const btn = document.getElementById('saveBtn');
+  const msg = document.getElementById('scoreMsg');
+  btn.disabled = true;
+  msg.innerHTML = '<div class="spin"></div>';
+  try {
+    const payload = scores.map(s => ({
+      game_date: gameDate,
+      round: round,
+      player_name: s.name,
+      points: s.pts,
+      saved_by: me.name,
+      league_id: currentLeagueId
+    }));
+    const { error } = await withRetry(() =>
+      sb.from('results').upsert(payload, { onConflict: 'league_id,game_date,round,player_name' })
+    );
+    if (error) throw new Error(error.message);
+    rounds.push({ round, scores });
+    buildHistory();
+    round++;
+    buildTable();
+    msg.innerHTML = '<div class="msg mok">✅ Kolo ' + (round-1) + ' uložené! (' + scores.length + ' hráčov)</div>';
+    clearLegResults();
+  } catch(e) {
+    btn.disabled = false;
+    msg.innerHTML = '<div class="msg merr">Chyba zápisu: ' + e.message + '</div>';
+  }
+}
+
+function resetGame() {
+  gameOn=false; round=1; rounds=[]; selPlayers=[]; currentLeagueId=''; currentLeagueName='';
+  document.getElementById('gStep1').style.display='block';
+  document.getElementById('gStep2').style.display='none';
+  document.getElementById('gStep3').style.display='none';
+  document.getElementById('rndHistory').innerHTML='';
+  document.querySelectorAll('.pchip').forEach(c=>c.classList.remove('sel'));
+  document.getElementById('selCount').textContent='';
+  document.getElementById('setupMsg').innerHTML='';
+  const box = document.getElementById('newLeagueBox');
+  if (box) box.style.display='none';
+  loadLeagues('leagueSelect');
+}
+
+async function loadScoreboard() {
+  const c = document.getElementById('sbContent');
+  const leagueSel = document.getElementById('sbLeagueSelect');
+  const leagueId = leagueSel ? leagueSel.value : '';
+  if (!leagueId) { c.innerHTML = '<div class="card tm" style="padding:2rem;text-align:center">Vyberte ligu na zobrazenie rebríčka</div>'; return; }
+  c.innerHTML = '<div class="spin"></div>';
+  try {
+    const { data: rows, error } = await withRetry(() =>
+      sb.from('results').select('player_name, points, game_date, round').eq('league_id', leagueId)
+    );
+    if (error) throw new Error(error.message);
+    const tot = {}, byP = {};
+    (rows || []).forEach(r => {
+      const n = r.player_name || '';
+      if (!n) return;
+      const p = parseInt(r.points) || 0;
+      tot[n] = (tot[n]||0)+p;
+      if (!byP[n]) byP[n]=[];
+      byP[n].push({ date: r.game_date||'', round: r.round||'', pts: p });
+    });
+    const srt = Object.entries(tot).sort((a,b)=>b[1]-a[1]);
+    if (!srt.length) { c.innerHTML='<div class="card tm" style="padding:2rem;text-align:center">Zatiaľ žiadne výsledky</div>'; return; }
+    let h = '<div class="card" style="padding:0">';
+    srt.forEach(([n,total],i) => {
+      const rk=i+1, rc=rk===1?'r1':rk===2?'r2':rk===3?'r3':'rn';
+      const enc = encodeURIComponent(JSON.stringify(byP[n]));
+      h += '<div class="srow" data-name="' + n + '" data-enc="' + enc + '">'
+        + '<div class="rbadge ' + rc + '">' + rk + '</div>'
+        + '<div style="font-size:1rem;font-weight:600">' + n + '</div>'
+        + '<div class="tpts">' + total + '<span style="font-size:.7rem;color:rgba(245,232,208,.45)"> b</span></div>'
+        + '</div>';
+    });
+    h += '</div>';
+    c.innerHTML = h;
+  } catch(e) {
+    c.innerHTML = '<div class="msg merr">Chyba: ' + e.message + '</div>';
+  }
+}
+</script>
