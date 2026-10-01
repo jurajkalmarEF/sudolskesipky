@@ -714,3 +714,248 @@ async function loadScoreboard() {
   }
 }
 </script>
+
+      
+<script>
+// === AKTÍVNA LIGA + HRÁČSKE KARTY — doplnok v2 ===
+let activeLeagueId = '';
+let playerAvatars = {};
+
+async function loadLeagues(selectId) {
+  const sel = document.getElementById(selectId);
+  if (!sel) return;
+  try {
+    const { data, error } = await withRetry(() => sb.from('leagues').select('id,name,is_active').order('name'));
+    if (error) throw new Error(error.message);
+    const activeRow = (data || []).find(l => l.is_active);
+    activeLeagueId = activeRow ? activeRow.id : '';
+    const opts = ['<option value="">— vyberte ligu —</option>']
+      .concat((data || []).map(l => '<option value="' + l.id + '">' + (l.is_active ? '★ ' : '') + l.name + '</option>'));
+    if (selectId === 'leagueSelect') opts.push('<option value="__new__">+ Nová liga...</option>');
+    sel.innerHTML = opts.join('');
+
+    const preselect = (selectId === 'leagueSelect' && currentLeagueId) ? currentLeagueId : activeLeagueId;
+    if (preselect) {
+      sel.value = preselect;
+      if (sel.value === preselect) {
+        if (selectId === 'leagueSelect') {
+          currentLeagueId = preselect;
+          currentLeagueName = sel.options[sel.selectedIndex].textContent.replace('★ ', '');
+          const box = document.getElementById('newLeagueBox');
+          if (box) box.style.display = 'none';
+        }
+        if (selectId === 'sbLeagueSelect') loadScoreboard();
+      }
+    }
+    renderActiveLeagueBtn();
+  } catch (e) {
+    sel.innerHTML = '<option value="">Chyba načítania líg</option>';
+  }
+}
+
+function onLeagueChange() {
+  const sel = document.getElementById('leagueSelect');
+  const box = document.getElementById('newLeagueBox');
+  if (sel.value === '__new__') {
+    box.style.display = 'block';
+    currentLeagueId = ''; currentLeagueName = '';
+  } else {
+    box.style.display = 'none';
+    currentLeagueId = sel.value;
+    currentLeagueName = sel.value ? sel.options[sel.selectedIndex].textContent.replace('★ ', '') : '';
+  }
+  renderActiveLeagueBtn();
+}
+
+async function createLeague() {
+  const nameInput = document.getElementById('newLeagueName');
+  const name = nameInput.value.trim();
+  const msg = document.getElementById('setupMsg');
+  if (!name) { msg.innerHTML = '<div class="msg merr">Zadajte názov ligy.</div>'; return; }
+  msg.innerHTML = '<div class="spin"></div>';
+  try {
+    const { data, error } = await withRetry(() => sb.from('leagues').insert({ name }).select('id,name').single());
+    if (error) throw new Error(error.message);
+    currentLeagueId = data.id; currentLeagueName = data.name;
+    await loadLeagues('leagueSelect');
+    document.getElementById('leagueSelect').value = currentLeagueId;
+    document.getElementById('newLeagueBox').style.display = 'none';
+    nameInput.value = '';
+    msg.innerHTML = '<div class="msg mok">Liga vytvorená a vybraná.</div>';
+    renderActiveLeagueBtn();
+  } catch (e) {
+    const dup = /duplicate|unique/i.test(e.message);
+    msg.innerHTML = '<div class="msg merr">' + (dup ? 'Liga s týmto názvom už existuje — vyberte ju zo zoznamu.' : 'Chyba: ' + e.message) + '</div>';
+  }
+}
+
+(function () {
+  const sel = document.getElementById('leagueSelect');
+  const fg = sel ? sel.closest('.fg') : null;
+  if (fg && !document.getElementById('activeLeagueBtn')) {
+    const btn = document.createElement('button');
+    btn.id = 'activeLeagueBtn';
+    btn.type = 'button';
+    btn.className = 'btn boutline bsm mt1';
+    btn.textContent = '★ Nastaviť ako aktívnu ligu';
+    btn.style.display = 'none';
+    btn.onclick = setActiveLeague;
+    fg.appendChild(btn);
+  }
+})();
+
+function renderActiveLeagueBtn() {
+  const btn = document.getElementById('activeLeagueBtn');
+  if (!btn) return;
+  btn.style.display = (currentLeagueId && currentLeagueId !== activeLeagueId) ? 'inline-block' : 'none';
+}
+
+async function setActiveLeague() {
+  if (!currentLeagueId) return;
+  const msg = document.getElementById('setupMsg');
+  msg.innerHTML = '<div class="spin"></div>';
+  try {
+    const { error } = await withRetry(() => sb.rpc('set_active_league', { p_league_id: currentLeagueId }));
+    if (error) throw new Error(error.message);
+    activeLeagueId = currentLeagueId;
+    msg.innerHTML = '<div class="msg mok">★ „' + currentLeagueName + '" je teraz aktívna liga.</div>';
+    renderActiveLeagueBtn();
+    await loadLeagues('leagueSelect');
+  } catch (e) {
+    msg.innerHTML = '<div class="msg merr">Chyba: ' + e.message + '</div>';
+  }
+}
+
+// ── HRÁČSKA KARTA ──
+async function ensureAvatar(name) {
+  if (playerAvatars[name] !== undefined) return playerAvatars[name];
+  try {
+    const { data } = await sb.from('players_public').select('avatar_url').eq('name', name).maybeSingle();
+    playerAvatars[name] = (data && data.avatar_url) ? data.avatar_url : null;
+  } catch (e) { playerAvatars[name] = null; }
+  return playerAvatars[name];
+}
+
+function initialsOf(name) {
+  return name.trim().split(/s+/).map(w => w[0]).join('').substring(0, 2).toUpperCase();
+}
+
+function sparklineSvg(points) {
+  if (!points.length) return '';
+  const max = Math.max(...points, 1);
+  const w = 280, h = 56, bw = w / points.length;
+  let bars = '';
+  points.forEach((p, i) => {
+    const bh = Math.max(3, (p / max) * (h - 4));
+    const x = i * bw + 2;
+    const y = h - bh;
+    bars += '<rect x="' + x + '" y="' + y + '" width="' + Math.max(2, bw - 4) + '" height="' + bh + '" fill="var(--gold)" rx="2"></rect>';
+  });
+  return '<svg width="100%" height="' + h + '" viewBox="0 0 ' + w + ' ' + h + '" preserveAspectRatio="none" style="display:block;margin-top:.5rem">' + bars + '</svg>';
+}
+
+async function showDetail(name, enc) {
+  const hist = JSON.parse(decodeURIComponent(enc));
+  const sorted = [...hist].sort((a, b) => (a.date + String(a.round).padStart(3, '0')).localeCompare(b.date + String(b.round).padStart(3, '0')));
+  const totalPts = sorted.reduce((s, r) => s + r.pts, 0);
+  const roundsPlayed = sorted.length;
+  const avg = roundsPlayed ? (totalPts / roundsPlayed) : 0;
+  const best = roundsPlayed ? Math.max(...sorted.map(r => r.pts)) : 0;
+  const last3 = sorted.slice(-3);
+  const last3Avg = last3.length ? last3.reduce((s, r) => s + r.pts, 0) / last3.length : 0;
+  let formIcon = '➖', formLabel = 'Stabilná forma';
+  if (roundsPlayed >= 3) {
+    if (last3Avg > avg * 1.1) { formIcon = '🔥'; formLabel = 'Vo forme'; }
+    else if (last3Avg < avg * 0.9) { formIcon = '📉'; formLabel = 'Slabšia forma'; }
+  }
+
+  let h = '<div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem">'
+    + '<div id="cardAvatar" style="width:64px;height:64px;border-radius:50%;background:rgba(201,168,76,.15);border:2px solid var(--gold);display:flex;align-items:center;justify-content:center;font-family:Oswald,sans-serif;font-weight:700;color:var(--gold2);font-size:1.3rem;flex-shrink:0">' + initialsOf(name) + '</div>'
+    + '<div><div style="font-family:Oswald,sans-serif;font-size:1.25rem;color:var(--gold2)">🎯 ' + name + '</div>'
+    + '<div style="font-size:.85rem;color:var(--gold3)">' + formIcon + ' ' + formLabel + '</div></div></div>';
+
+  h += '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:.6rem;margin-bottom:1rem">'
+    + '<div class="card" style="padding:.6rem;text-align:center"><div class="tpts" style="font-size:1.3rem">' + totalPts + '</div><div style="font-size:.68rem;color:var(--gold3)">SPOLU BODOV</div></div>'
+    + '<div class="card" style="padding:.6rem;text-align:center"><div class="tpts" style="font-size:1.3rem">' + avg.toFixed(1) + '</div><div style="font-size:.68rem;color:var(--gold3)">PRIEMER/KOLO</div></div>'
+    + '<div class="card" style="padding:.6rem;text-align:center"><div class="tpts" style="font-size:1.3rem">' + best + '</div><div style="font-size:.68rem;color:var(--gold3)">NAJLEPŠIE KOLO</div></div>'
+    + '</div>';
+
+  if (sorted.length > 1) {
+    h += '<div style="font-size:.78rem;color:var(--gold3);margin-bottom:.2rem">VÝKONNOSŤ (posledných ' + Math.min(sorted.length, 20) + ' kôl)</div>';
+    h += sparklineSvg(sorted.slice(-20).map(r => r.pts));
+  }
+
+  const bd = {};
+  hist.forEach(x => { if (!bd[x.date]) bd[x.date] = { r: [], t: 0 }; bd[x.date].r.push(x); bd[x.date].t += x.pts; });
+  const dates = Object.keys(bd).sort().reverse();
+  h += '<div style="margin-top:1rem">';
+  if (!dates.length) h += '<div class="tm">Žiadne záznamy</div>';
+  dates.forEach(d => {
+    const x = bd[d];
+    h += '<div style="margin-bottom:1rem"><div style="color:var(--gold3);font-size:.83rem;margin-bottom:.35rem">' + fmtD(d) + ' — Spolu: <strong style="color:var(--gold2)">' + x.t + '</strong> b</div>'
+      + '<table class="stbl" style="font-size:.88rem"><tr><th>Kolo</th><th>Body</th></tr>'
+      + x.r.sort((a, b) => a.round - b.round).map(r => '<tr><td>Kolo ' + r.round + '</td><td>' + r.pts + '</td></tr>').join('')
+      + '</table></div>';
+  });
+  h += '</div>';
+
+  document.getElementById('modalBody').innerHTML = h;
+  document.getElementById('detModal').classList.add('open');
+
+  const avatarUrl = await ensureAvatar(name);
+  if (avatarUrl) {
+    const el = document.getElementById('cardAvatar');
+    if (el) el.outerHTML = '<img id="cardAvatar" src="' + avatarUrl + '" style="width:64px;height:64px;border-radius:50%;object-fit:cover;border:2px solid var(--gold);flex-shrink:0">';
+  }
+}
+
+// ── PROFIL / NAHRATIE FOTKY ──
+function openProfileModal() {
+  const h = '<div style="font-family:Oswald,sans-serif;font-size:1.25rem;color:var(--gold2);margin-bottom:1rem">👤 ' + me.name + ' — Profilová fotka</div>'
+    + '<div class="fg"><label>Fotka</label><input type="file" id="avatarFile" accept="image/*"></div>'
+    + '<div class="fg"><label>Heslo (potvrdenie)</label><input type="password" id="avatarPass" placeholder="Vaše heslo"></div>'
+    + '<button class="btn bgold" id="avatarSaveBtn" onclick="uploadAvatar()">Uložiť fotku</button>'
+    + '<div id="avatarMsg" class="mt1"></div>';
+  document.getElementById('modalBody').innerHTML = h;
+  document.getElementById('detModal').classList.add('open');
+}
+
+async function uploadAvatar() {
+  const fileInput = document.getElementById('avatarFile');
+  const pass = document.getElementById('avatarPass').value;
+  const msg = document.getElementById('avatarMsg');
+  const btn = document.getElementById('avatarSaveBtn');
+  const file = fileInput.files[0];
+  if (!file) { msg.innerHTML = '<div class="msg merr">Vyberte súbor.</div>'; return; }
+  if (!pass) { msg.innerHTML = '<div class="msg merr">Zadajte heslo.</div>'; return; }
+  btn.disabled = true;
+  msg.innerHTML = '<div class="spin"></div>';
+  try {
+    const ext = (file.name.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
+    const safeName = me.name.toLowerCase().replace(/[^a-z0-9]/g, '') || 'hrac';
+    const path = safeName + '-' + Date.now() + '.' + ext;
+    const { error: upErr } = await sb.storage.from('avatars').upload(path, file, { upsert: true });
+    if (upErr) throw new Error(upErr.message);
+    const { data: urlData } = sb.storage.from('avatars').getPublicUrl(path);
+    const avatarUrl = urlData.publicUrl;
+    const { data, error } = await withRetry(() => sb.rpc('update_avatar', { p_name: me.name, p_password: pass, p_avatar_url: avatarUrl }));
+    if (error) throw new Error(error.message);
+    if (data.status === 'error') { btn.disabled = false; msg.innerHTML = '<div class="msg merr">' + data.message + '</div>'; return; }
+    playerAvatars[me.name] = avatarUrl;
+    msg.innerHTML = '<div class="msg mok">✅ Fotka uložená!</div>';
+    btn.disabled = false;
+  } catch (e) {
+    btn.disabled = false;
+    msg.innerHTML = '<div class="msg merr">Chyba: ' + e.message + '</div>';
+  }
+}
+
+(function () {
+  const ub = document.getElementById('ubadge');
+  if (ub) {
+    ub.style.cursor = 'pointer';
+    ub.title = 'Upraviť profilovú fotku';
+    ub.onclick = openProfileModal;
+  }
+})();
+</script>
