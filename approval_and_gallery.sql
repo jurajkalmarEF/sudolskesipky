@@ -117,6 +117,11 @@ create policy "public insert" on gallery_items for insert with check (true);
 drop policy if exists "public delete" on gallery_items;
 create policy "public delete" on gallery_items for delete using (true);
 
+-- chýbalo pri prvom nasadení — bez tejto policy appka nemohla opraviť/zmeniť file_url
+-- existujúceho záznamu (napr. pri konverzii HEIC na JPEG), update potichu zlyhal
+drop policy if exists "public update" on gallery_items;
+create policy "public update" on gallery_items for update using (true) with check (true);
+
 insert into storage.buckets (id, name, public)
 values ('gallery', 'gallery', true)
 on conflict (id) do nothing;
