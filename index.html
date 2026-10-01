@@ -96,6 +96,20 @@ select option{background:var(--navy2)}
 .fw{width:100%}
 .flex{display:flex}.g1{gap:.5rem}.g2{gap:1rem}
 @media(max-width:580px){header{padding:.6rem};.page{padding:1rem}}
+.gal-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:.6rem;margin-top:1rem}
+.gal-item{position:relative;border-radius:2px;overflow:hidden;background:var(--navy2);border:1px solid var(--b1);aspect-ratio:1/1;cursor:pointer}
+.gal-item img,.gal-item video{width:100%;height:100%;object-fit:cover;display:block}
+.gal-item .gal-cap{position:absolute;left:0;right:0;bottom:0;padding:.35rem .5rem;background:linear-gradient(to top,rgba(0,0,0,.8),transparent);font-size:.72rem;color:var(--cream);line-height:1.3}
+.gal-item .gal-play{position:absolute;top:.5rem;right:.5rem;width:22px;height:22px;border-radius:50%;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;color:var(--gold2);font-size:.65rem}
+.gal-item .gal-del{position:absolute;top:.5rem;left:.5rem;width:24px;height:24px;border-radius:50%;background:rgba(185,28,28,.85);color:#fff;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:.8rem;z-index:2}
+.gal-lightbox{position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:600;display:flex;align-items:center;justify-content:center;padding:1.5rem}
+.gal-lightbox img,.gal-lightbox video{max-width:100%;max-height:85vh}
+.gal-lightbox-close{position:absolute;top:1rem;right:1.2rem;color:var(--gold2);font-size:1.8rem;background:none;border:none;cursor:pointer}
+.gal-lightbox-nav{position:absolute;top:50%;transform:translateY(-50%);width:44px;height:44px;border-radius:50%;border:none;cursor:pointer;background:rgba(0,0,0,.5);color:var(--gold2);font-size:1.8rem;display:flex;align-items:center;justify-content:center}
+.gal-lightbox-nav:hover{background:rgba(0,0,0,.75)}
+.gal-lightbox-prev{left:.8rem}
+.gal-lightbox-next{right:.8rem}
+.gal-lightbox-cap{position:absolute;bottom:1.1rem;left:0;right:0;text-align:center;color:var(--gold3);font-size:.85rem;padding:0 3.5rem}
 </style>
 </head>
 <body>
@@ -108,6 +122,8 @@ select option{background:var(--navy2)}
   <nav>
     <button onclick="showPage('gamePage')" id="navGame">🎯 Hra</button>
     <button onclick="showPage('scorePage')" id="navScore">🏆 Rebríček</button>
+    <button onclick="showPage('galleryPage')" id="navGallery">📷 Galéria</button>
+    <button class="btn boutline bsm" id="navApprove" style="display:none" onclick="openApprovalsModal()">⏳ Schváliť (<span id="pendingCount">0</span>)</button>
     <div id="ubadge" class="ubadge"></div>
     <button class="lbtn" onclick="logout()">Odhlásiť</button>
   </nav>
@@ -188,6 +204,20 @@ select option{background:var(--navy2)}
   <div class="ptitle">🏆 Rebríček</div>
   <div class="psub">Celkové body všetkých hráčov</div>
   <div id="sbContent"><div class="spin"></div></div>
+</div>
+
+<!-- GALLERY -->
+<div id="galleryPage" class="page">
+  <div class="ptitle">📷 Galéria</div>
+  <div class="psub">Fotky a videá z hracích dní</div>
+  <div class="card">
+    <div class="ctitle">⬆️ Nahrať fotku / video</div>
+    <div class="fg"><label>Súbor</label><input type="file" id="galFile" accept="image/*,video/*"></div>
+    <div class="fg"><label>Popis (nepovinné)</label><input type="text" id="galCaption" placeholder="napr. 3. kolo, finále" maxlength="140"></div>
+    <button class="btn bgold" onclick="uploadGalleryItem()">Nahrať</button>
+    <div id="galUploadMsg" class="mt1"></div>
+  </div>
+  <div id="galGrid" class="gal-grid"><div class="spin"></div></div>
 </div>
 
 <!-- MODAL -->
@@ -958,4 +988,232 @@ async function uploadAvatar() {
     ub.onclick = openProfileModal;
   }
 })();
+</script>
+
+<script>
+// === SCHVAĽOVANIE HRÁČOV + GALÉRIA — doplnok v3 ===
+
+// ── NAV override (pridáva galériu) ──
+function showPage(id) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  if (id === 'gamePage') { document.getElementById('navGame').classList.add('active'); if (!gameOn) loadPlayers(); }
+  if (id === 'scorePage') { document.getElementById('navScore').classList.add('active'); loadScoreboard(); }
+  if (id === 'galleryPage') { document.getElementById('navGallery').classList.add('active'); loadGallery(); }
+}
+
+function showApp() {
+  document.getElementById('loginPage').style.display = 'none';
+  document.getElementById('mainHeader').style.display = 'flex';
+  document.getElementById('ubadge').textContent = '👤 ' + me.name;
+  showPage('gamePage');
+  checkPendingApprovals();
+}
+
+// ── REGISTRÁCIA override (zobrazí správu zo servera — vrátane upozornenia na schválenie) ──
+async function doRegister() {
+  const name = document.getElementById('rName').value.trim();
+  const pass = document.getElementById('rPass').value;
+  const pass2 = document.getElementById('rPass2').value;
+  const msg = document.getElementById('loginMsg');
+  if (!name) { msg.innerHTML = '<div class="msg merr">Zadajte meno.</div>'; return; }
+  if (pass.length < 4) { msg.innerHTML = '<div class="msg merr">Heslo musí mať aspoň 4 znaky.</div>'; return; }
+  if (pass !== pass2) { msg.innerHTML = '<div class="msg merr">Heslá sa nezhodujú.</div>'; return; }
+  msg.innerHTML = '<div class="spin"></div>';
+  try {
+    const { data, error } = await withRetry(() => sb.rpc('register_player', { p_name: name, p_password: pass }));
+    if (error) throw new Error(error.message);
+    if (data.status === 'error') { msg.innerHTML = '<div class="msg merr">' + data.message + '</div>'; return; }
+    msg.innerHTML = '<div class="msg mok">' + (data.message || 'Registrácia úspešná.') + '</div>';
+    switchTab('login');
+    document.getElementById('lName').value = name;
+  } catch (e) { msg.innerHTML = '<div class="msg merr">Chyba: ' + e.message + '</div>'; }
+}
+
+// ── SCHVAĽOVANIE NOVÝCH HRÁČOV ──
+async function checkPendingApprovals() {
+  const btn = document.getElementById('navApprove');
+  try {
+    const { data, error } = await sb.from('players_pending').select('name');
+    if (error) throw new Error(error.message);
+    const n = (data || []).length;
+    if (n > 0) {
+      btn.style.display = 'inline-block';
+      document.getElementById('pendingCount').textContent = n;
+    } else {
+      btn.style.display = 'none';
+    }
+  } catch (e) {
+    btn.style.display = 'none';
+  }
+}
+
+async function openApprovalsModal() {
+  let h = '<div class="ctitle">⏳ Čakajú na schválenie</div>';
+  try {
+    const { data, error } = await withRetry(() => sb.from('players_pending').select('name,created_at').order('created_at'));
+    if (error) throw new Error(error.message);
+    if (!data.length) {
+      h += '<div class="tm">Žiadni hráči nečakajú na schválenie.</div>';
+    } else {
+      h += '<div class="fg"><label>Vaše heslo (na potvrdenie)</label><input type="password" id="approvePass" placeholder="Heslo"></div>';
+      h += data.map(function (p) {
+        const safe = p.name.replace(/'/g, "\\'");
+        return '<div class="srow" style="grid-template-columns:1fr auto;cursor:default">' +
+          '<span style="font-weight:600">' + p.name + '</span>' +
+          '<button class="btn bgold bsm" onclick="approvePlayer(\'' + safe + '\')">Schváliť</button></div>';
+      }).join('');
+      h += '<div id="approveMsg" class="mt1"></div>';
+    }
+  } catch (e) {
+    h += '<div class="msg merr">Chyba: ' + e.message + '</div>';
+  }
+  document.getElementById('modalBody').innerHTML = h;
+  document.getElementById('detModal').classList.add('open');
+}
+
+async function approvePlayer(name) {
+  const passEl = document.getElementById('approvePass');
+  const pass = passEl ? passEl.value : '';
+  const msg = document.getElementById('approveMsg');
+  if (!pass) { msg.innerHTML = '<div class="msg merr">Zadajte svoje heslo.</div>'; return; }
+  msg.innerHTML = '<div class="spin"></div>';
+  try {
+    const { data, error } = await withRetry(() => sb.rpc('approve_player', { p_approver_name: me.name, p_approver_password: pass, p_target_name: name }));
+    if (error) throw new Error(error.message);
+    if (data.status === 'error') { msg.innerHTML = '<div class="msg merr">' + data.message + '</div>'; return; }
+    msg.innerHTML = '<div class="msg mok">✅ ' + name + ' je schválený(á)!</div>';
+    checkPendingApprovals();
+    setTimeout(openApprovalsModal, 700);
+  } catch (e) { msg.innerHTML = '<div class="msg merr">Chyba: ' + e.message + '</div>'; }
+}
+
+// ── GALÉRIA ──
+const GALLERY_BUCKET = 'gallery';
+const GALLERY_TABLE = 'gallery_items';
+let GAL_CACHE = [];
+
+function escapeHtmlG(s) {
+  return String(s || '').replace(/[&<>"']/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+  });
+}
+
+function galMediaHtml(item) {
+  if (item.file_type === 'video') {
+    return '<video src="' + item.file_url + '" muted playsinline preload="metadata"></video><span class="gal-play">▶</span>';
+  }
+  return '<img src="' + item.file_url + '" alt="" loading="lazy">';
+}
+
+function galStoragePath(url) {
+  const marker = '/storage/v1/object/public/' + GALLERY_BUCKET + '/';
+  const idx = (url || '').indexOf(marker);
+  return idx === -1 ? null : decodeURIComponent(url.slice(idx + marker.length));
+}
+
+async function loadGallery() {
+  const grid = document.getElementById('galGrid');
+  grid.innerHTML = '<div class="spin"></div>';
+  try {
+    const { data, error } = await withRetry(() => sb.from(GALLERY_TABLE).select('*').order('created_at', { ascending: false }).limit(200));
+    if (error) throw new Error(error.message);
+    GAL_CACHE = data || [];
+    if (!GAL_CACHE.length) { grid.innerHTML = '<div class="tm">Zatiaľ žiadne fotky ani videá. Buďte prví!</div>'; return; }
+    grid.innerHTML = GAL_CACHE.map(function (item, idx) {
+      const cap = item.caption ? '<div class="gal-cap">' + escapeHtmlG(item.caption) + '</div>' : '';
+      const canDel = me && item.uploader_name === me.name;
+      const del = canDel ? '<button class="gal-del" onclick="event.stopPropagation();deleteGalleryItem(\'' + item.id + '\')" title="Vymazať">✕</button>' : '';
+      return '<div class="gal-item" onclick="openGalLightbox(' + idx + ')">' + del + galMediaHtml(item) + cap + '</div>';
+    }).join('');
+  } catch (e) {
+    grid.innerHTML = '<div class="msg merr">Chyba: ' + e.message + '</div>';
+  }
+}
+
+async function uploadGalleryItem() {
+  const fileInput = document.getElementById('galFile');
+  const file = fileInput.files[0];
+  const msg = document.getElementById('galUploadMsg');
+  if (!file) { msg.innerHTML = '<div class="msg merr">Vyberte súbor.</div>'; return; }
+  const isVideo = file.type.indexOf('video') === 0;
+  const isImage = file.type.indexOf('image') === 0;
+  if (!isVideo && !isImage) { msg.innerHTML = '<div class="msg merr">Podporované sú len fotky a videá.</div>'; return; }
+  if (file.size > 80 * 1024 * 1024) { msg.innerHTML = '<div class="msg merr">Súbor je príliš veľký (max 80 MB).</div>'; return; }
+  msg.innerHTML = '<div class="spin"></div>';
+  try {
+    const ext = (file.name.split('.').pop() || 'dat').toLowerCase().replace(/[^a-z0-9]/g, '') || 'dat';
+    const path = Date.now() + '-' + Math.random().toString(36).slice(2, 8) + '.' + ext;
+    const { error: upErr } = await sb.storage.from(GALLERY_BUCKET).upload(path, file);
+    if (upErr) throw new Error(upErr.message);
+    const { data: urlData } = sb.storage.from(GALLERY_BUCKET).getPublicUrl(path);
+    const { error } = await withRetry(() => sb.from(GALLERY_TABLE).insert({
+      file_url: urlData.publicUrl,
+      file_type: isVideo ? 'video' : 'image',
+      caption: document.getElementById('galCaption').value.slice(0, 140) || null,
+      uploader_name: me ? me.name : null
+    }));
+    if (error) throw new Error(error.message);
+    msg.innerHTML = '<div class="msg mok">Hotovo!</div>';
+    document.getElementById('galCaption').value = '';
+    fileInput.value = '';
+    loadGallery();
+  } catch (e) {
+    msg.innerHTML = '<div class="msg merr">Chyba: ' + e.message + '</div>';
+  }
+}
+
+function deleteGalleryItem(id) {
+  const item = GAL_CACHE.find(function (x) { return x.id === id; });
+  if (!item) return;
+  if (!confirm('Naozaj vymazať túto fotku/video?')) return;
+  const path = galStoragePath(item.file_url);
+  (path ? sb.storage.from(GALLERY_BUCKET).remove([path]) : Promise.resolve({}))
+    .then(function () { return sb.from(GALLERY_TABLE).delete().eq('id', id); })
+    .then(function (res) {
+      if (res && res.error) { alert('Mazanie zlyhalo: ' + res.error.message); return; }
+      const lb = document.querySelector('.gal-lightbox');
+      if (lb) lb.remove();
+      loadGallery();
+    })
+    .catch(function (err) { alert('Chyba: ' + (err && err.message ? err.message : err)); });
+}
+
+function renderGalLightbox(box, index) {
+  const item = GAL_CACHE[index];
+  if (!item) return;
+  box.dataset.index = index;
+  const canDel = me && item.uploader_name === me.name;
+  const hasPrev = index > 0, hasNext = index < GAL_CACHE.length - 1;
+  const cap = item.caption ? '<div class="gal-lightbox-cap">' + escapeHtmlG(item.caption) + '</div>' : '';
+  box.innerHTML =
+    (hasPrev ? '<button class="gal-lightbox-nav gal-lightbox-prev" type="button">‹</button>' : '') +
+    (item.file_type === 'video'
+      ? '<video src="' + item.file_url + '" controls autoplay playsinline></video>'
+      : '<img src="' + item.file_url + '" alt="">') +
+    cap +
+    (hasNext ? '<button class="gal-lightbox-nav gal-lightbox-next" type="button">›</button>' : '') +
+    (canDel ? '<button class="btn bdanger bsm" style="position:absolute;top:1rem;left:1rem" onclick="deleteGalleryItem(\'' + item.id + '\')">Vymazať</button>' : '') +
+    '<button class="gal-lightbox-close" type="button">✕</button>';
+}
+
+function openGalLightbox(index) {
+  const box = document.createElement('div');
+  box.className = 'gal-lightbox';
+  renderGalLightbox(box, index);
+  box.addEventListener('click', function (e) {
+    if (e.target === box || e.target.classList.contains('gal-lightbox-close')) { box.remove(); return; }
+    if (e.target.classList.contains('gal-lightbox-prev')) { renderGalLightbox(box, parseInt(box.dataset.index, 10) - 1); return; }
+    if (e.target.classList.contains('gal-lightbox-next')) { renderGalLightbox(box, parseInt(box.dataset.index, 10) + 1); return; }
+  });
+  function onKey(e) {
+    if (!document.body.contains(box)) { document.removeEventListener('keydown', onKey); return; }
+    if (e.key === 'Escape') box.remove();
+    if (e.key === 'ArrowLeft' && parseInt(box.dataset.index, 10) > 0) renderGalLightbox(box, parseInt(box.dataset.index, 10) - 1);
+    if (e.key === 'ArrowRight' && parseInt(box.dataset.index, 10) < GAL_CACHE.length - 1) renderGalLightbox(box, parseInt(box.dataset.index, 10) + 1);
+  }
+  document.addEventListener('keydown', onKey);
+  document.body.appendChild(box);
+}
 </script>
