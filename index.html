@@ -993,13 +993,13 @@ async function uploadAvatar() {
 <script>
 // === SCHVAĽOVANIE HRÁČOV + GALÉRIA — doplnok v3 ===
 
-// ── NAV override (pridáva galériu) ──
+// ── NAV override (pridáva galériu, zachováva načítanie líg) ──
 function showPage(id) {
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
   document.getElementById(id).classList.add('active');
-  if (id === 'gamePage') { document.getElementById('navGame').classList.add('active'); if (!gameOn) loadPlayers(); }
-  if (id === 'scorePage') { document.getElementById('navScore').classList.add('active'); loadScoreboard(); }
+  if (id === 'gamePage') { document.getElementById('navGame').classList.add('active'); if (!gameOn) { loadPlayers(); loadLeagues('leagueSelect'); } }
+  if (id === 'scorePage') { document.getElementById('navScore').classList.add('active'); loadLeagues('sbLeagueSelect').then(loadScoreboard); }
   if (id === 'galleryPage') { document.getElementById('navGallery').classList.add('active'); loadGallery(); }
 }
 
