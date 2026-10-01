@@ -16,6 +16,7 @@
 <link rel="apple-touch-icon" href="/icon-192.png">
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@400;600;700&family=Rajdhani:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/heic2any/0.0.4/heic2any.min.js"></script>
 <style>
 :root{--navy:#0a0f1e;--navy2:#111827;--navy3:#1a2540;--gold:#c9a84c;--gold2:#e8c96a;--gold3:#f5e3a0;--red:#b91c1c;--cream:#f5e8d0;--b1:rgba(201,168,76,0.25);--b2:rgba(201,168,76,0.55)}
 *{box-sizing:border-box;margin:0;padding:0}
@@ -1134,18 +1135,32 @@ async function loadGallery() {
 
 async function uploadGalleryItem() {
   const fileInput = document.getElementById('galFile');
-  const file = fileInput.files[0];
+  let file = fileInput.files[0];
   const msg = document.getElementById('galUploadMsg');
   if (!file) { msg.innerHTML = '<div class="msg merr">Vyberte súbor.</div>'; return; }
+  const origExt = (file.name.split('.').pop() || '').toLowerCase();
+  // Niektoré prehliadače (napr. z iPhonu) nerozpoznajú HEIC typ a file.type je prázdny — kontrolujeme aj príponu.
+  const isHeic = /image\/hei[cf]/i.test(file.type) || origExt === 'heic' || origExt === 'heif';
   const isVideo = file.type.indexOf('video') === 0;
-  const isImage = file.type.indexOf('image') === 0;
+  const isImage = file.type.indexOf('image') === 0 || isHeic;
   if (!isVideo && !isImage) { msg.innerHTML = '<div class="msg merr">Podporované sú len fotky a videá.</div>'; return; }
   if (file.size > 80 * 1024 * 1024) { msg.innerHTML = '<div class="msg merr">Súbor je príliš veľký (max 80 MB).</div>'; return; }
   msg.innerHTML = '<div class="spin"></div>';
   try {
-    const ext = (file.name.split('.').pop() || 'dat').toLowerCase().replace(/[^a-z0-9]/g, '') || 'dat';
+    let ext = (origExt || 'dat').replace(/[^a-z0-9]/g, '') || 'dat';
+    let contentType = file.type || undefined;
+    // HEIC/HEIF (bežný formát fotiek z iPhonu) väčšina prehliadačov nevie zobraziť —
+    // skonvertujeme ho v prehliadači na JPEG, nech je fotka vidieť všetkým.
+    if (isHeic) {
+      msg.innerHTML = '<div class="spin"></div><div class="tm mt1">Konvertujem HEIC fotku na JPEG…</div>';
+      const converted = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.85 });
+      file = converted instanceof Blob ? converted : converted[0];
+      ext = 'jpg';
+      contentType = 'image/jpeg';
+      msg.innerHTML = '<div class="spin"></div>';
+    }
     const path = Date.now() + '-' + Math.random().toString(36).slice(2, 8) + '.' + ext;
-    const { error: upErr } = await sb.storage.from(GALLERY_BUCKET).upload(path, file);
+    const { error: upErr } = await sb.storage.from(GALLERY_BUCKET).upload(path, file, { contentType });
     if (upErr) throw new Error(upErr.message);
     const { data: urlData } = sb.storage.from(GALLERY_BUCKET).getPublicUrl(path);
     const { error } = await withRetry(() => sb.from(GALLERY_TABLE).insert({
