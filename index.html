@@ -29,7 +29,7 @@ header{background:linear-gradient(180deg,#000,var(--navy));border-bottom:2px sol
 nav{display:flex;gap:.4rem;align-items:center;flex-wrap:wrap}
 nav button{background:transparent;border:1px solid var(--b1);color:var(--cream);font-family:'Oswald',sans-serif;font-size:.8rem;letter-spacing:1.5px;text-transform:uppercase;padding:.35rem .9rem;cursor:pointer;transition:all .2s}
 nav button:hover,nav button.active{border-color:var(--gold);color:var(--gold2);background:rgba(201,168,76,.1)}
-.ubadge{background:rgba(201,168,76,.15);border:1px solid var(--gold);color:var(--gold2);padding:.3rem .8rem;font-family:'Oswald',sans-serif;font-size:.8rem}
+.ubadge{background:rgba(201,168,76,.15);border:1px solid var(--gold);color:var(--gold2);padding:.3rem .8rem;font-family:'Oswald',sans-serif;font-size:.8rem;display:inline-flex;align-items:center;gap:.5rem}
 .lbtn{background:rgba(185,28,28,.2)!important;border-color:var(--red)!important;color:#fca5a5!important}
 .page{display:none;padding:2rem 1.5rem;max-width:980px;margin:0 auto}
 .page.active{display:block}
@@ -63,7 +63,7 @@ select option{background:var(--navy2)}
 .mok{background:rgba(22,163,74,.2);border-left:3px solid #16a34a;color:#86efac}
 .minfo{background:rgba(201,168,76,.12);border-left:3px solid var(--gold);color:var(--gold3)}
 .pgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(135px,1fr));gap:.55rem;margin:.8rem 0}
-.pchip{padding:.45rem .7rem;border:1px solid var(--b1);background:transparent;color:var(--cream);font-family:'Rajdhani',sans-serif;font-size:.92rem;cursor:pointer;transition:all .2s;text-align:center}
+.pchip{padding:.4rem .7rem;border:1px solid var(--b1);background:transparent;color:var(--cream);font-family:'Rajdhani',sans-serif;font-size:.92rem;cursor:pointer;transition:all .2s;display:flex;align-items:center;gap:.5rem;justify-content:center}
 .pchip.sel{background:rgba(201,168,76,.2);border-color:var(--gold);color:var(--gold2)}
 .stbl{width:100%;border-collapse:collapse}
 .stbl th{background:rgba(201,168,76,.15);color:var(--gold2);font-family:'Oswald',sans-serif;font-size:.82rem;letter-spacing:1.5px;text-transform:uppercase;padding:.55rem .8rem;text-align:left;border-bottom:1px solid var(--b2)}
@@ -341,15 +341,18 @@ async function loadPlayers() {
     const names = (data || []).map(r => r.name).filter(Boolean);
     g.innerHTML = '';
     if (!names.length) { g.innerHTML = '<div class="tm">Žiadni hráči. Zaregistrujte sa.</div>'; return; }
-    names.forEach(n => {
+    names.forEach((n, idx) => {
       const d = document.createElement('div');
-      d.className = 'pchip'; d.textContent = n;
+      d.className = 'pchip';
+      const avId = 'pav' + idx;
+      d.innerHTML = avatarPlaceholderHtml(avId, n, 28) + '<span class="pchip-name">' + n + '</span>';
       d.onclick = () => {
         d.classList.toggle('sel');
-        selPlayers = [...document.querySelectorAll('.pchip.sel')].map(c => c.textContent);
+        selPlayers = [...document.querySelectorAll('.pchip.sel')].map(c => c.querySelector('.pchip-name').textContent);
         document.getElementById('selCount').textContent = selPlayers.length ? `Vybraní: ${selPlayers.length}` : '';
       };
       g.appendChild(d);
+      applyAvatar(avId, n, 28, true);
     });
   } catch(e) { g.innerHTML = `<div class="msg merr">Chyba: ${e.message}</div>`; }
 }
@@ -372,8 +375,10 @@ function buildTable() {
   tb.innerHTML = '';
   selPlayers.forEach((n,i) => {
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${i+1}</td><td style="font-weight:600">${n}</td><td><input type="number" min="0" max="9999" placeholder="0" id="p${i}"></td>`;
+    const avId = 'rav' + i;
+    tr.innerHTML = `<td>${i+1}</td><td style="font-weight:600"><span style="display:flex;align-items:center;gap:.5rem">${avatarPlaceholderHtml(avId, n, 26)}<span>${n}</span></span></td><td><input type="number" min="0" max="9999" placeholder="0" id="p${i}"></td>`;
     tb.appendChild(tr);
+    applyAvatar(avId, n, 26, true);
   });
   document.getElementById('scoreMsg').innerHTML = '';
   document.getElementById('saveBtn').disabled = false;
@@ -752,6 +757,38 @@ async function loadScoreboard() {
 let activeLeagueId = '';
 let playerAvatars = {};
 
+// ── AVATAR HELPERY (znovapoužiteľné pre picker, kolo, hlavičku, kartu, profil) ──
+function avatarPlaceholderHtml(id, name, size, borderStyle) {
+  const border = borderStyle || '1px solid var(--b2)';
+  return '<span id="' + id + '" class="avatar-thumb" style="width:' + size + 'px;height:' + size + 'px;min-width:' + size + 'px;border-radius:50%;background:rgba(201,168,76,.15);border:' + border + ';display:inline-flex;align-items:center;justify-content:center;font-family:Oswald,sans-serif;font-weight:700;color:var(--gold2);font-size:' + Math.max(10, Math.round(size * 0.38)) + 'px;flex-shrink:0;overflow:hidden;vertical-align:middle">' + initialsOf(name) + '</span>';
+}
+
+async function applyAvatar(id, name, size, enlargeable) {
+  const url = await ensureAvatar(name);
+  const el = document.getElementById(id);
+  if (!el || !url) return;
+  el.innerHTML = '<img src="' + url + '" alt="" style="width:100%;height:100%;object-fit:cover;display:block">';
+  if (enlargeable) {
+    el.style.cursor = 'pointer';
+    el.onclick = function (e) { if (e && e.stopPropagation) e.stopPropagation(); openImageLightbox(url); };
+  }
+}
+
+function openImageLightbox(url) {
+  const box = document.createElement('div');
+  box.className = 'gal-lightbox';
+  box.innerHTML = '<img src="' + url + '" alt=""><button class="gal-lightbox-close" type="button">✕</button>';
+  box.addEventListener('click', function (e) {
+    if (e.target === box || e.target.classList.contains('gal-lightbox-close')) box.remove();
+  });
+  function onKey(e) {
+    if (!document.body.contains(box)) { document.removeEventListener('keydown', onKey); return; }
+    if (e.key === 'Escape') box.remove();
+  }
+  document.addEventListener('keydown', onKey);
+  document.body.appendChild(box);
+}
+
 async function loadLeagues(selectId) {
   const sel = document.getElementById(selectId);
   if (!sel) return;
@@ -901,7 +938,7 @@ async function showDetail(name, enc) {
   }
 
   let h = '<div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem">'
-    + '<div id="cardAvatar" style="width:64px;height:64px;border-radius:50%;background:rgba(201,168,76,.15);border:2px solid var(--gold);display:flex;align-items:center;justify-content:center;font-family:Oswald,sans-serif;font-weight:700;color:var(--gold2);font-size:1.3rem;flex-shrink:0">' + initialsOf(name) + '</div>'
+    + avatarPlaceholderHtml('cardAvatar', name, 64, '2px solid var(--gold)')
     + '<div><div style="font-family:Oswald,sans-serif;font-size:1.25rem;color:var(--gold2)">🎯 ' + name + '</div>'
     + '<div style="font-size:.85rem;color:var(--gold3)">' + formIcon + ' ' + formLabel + '</div></div></div>';
 
@@ -933,22 +970,22 @@ async function showDetail(name, enc) {
   document.getElementById('modalBody').innerHTML = h;
   document.getElementById('detModal').classList.add('open');
 
-  const avatarUrl = await ensureAvatar(name);
-  if (avatarUrl) {
-    const el = document.getElementById('cardAvatar');
-    if (el) el.outerHTML = '<img id="cardAvatar" src="' + avatarUrl + '" style="width:64px;height:64px;border-radius:50%;object-fit:cover;border:2px solid var(--gold);flex-shrink:0">';
-  }
+  applyAvatar('cardAvatar', name, 64, true);
 }
 
 // ── PROFIL / NAHRATIE FOTKY ──
 function openProfileModal() {
-  const h = '<div style="font-family:Oswald,sans-serif;font-size:1.25rem;color:var(--gold2);margin-bottom:1rem">👤 ' + me.name + ' — Profilová fotka</div>'
-    + '<div class="fg"><label>Fotka</label><input type="file" id="avatarFile" accept="image/*"></div>'
+  const h = '<div style="display:flex;align-items:center;gap:1rem;margin-bottom:1rem">'
+    + avatarPlaceholderHtml('profAvatar', me.name, 64, '2px solid var(--gold)')
+    + '<div style="font-family:Oswald,sans-serif;font-size:1.25rem;color:var(--gold2)">👤 ' + me.name + '</div></div>'
+    + '<div class="tm mt1" style="margin-bottom:.8rem">Klikni na fotku pre zväčšenie.</div>'
+    + '<div class="fg"><label>Nová fotka</label><input type="file" id="avatarFile" accept="image/*"></div>'
     + '<div class="fg"><label>Heslo (potvrdenie)</label><input type="password" id="avatarPass" placeholder="Vaše heslo"></div>'
     + '<button class="btn bgold" id="avatarSaveBtn" onclick="uploadAvatar()">Uložiť fotku</button>'
     + '<div id="avatarMsg" class="mt1"></div>';
   document.getElementById('modalBody').innerHTML = h;
   document.getElementById('detModal').classList.add('open');
+  applyAvatar('profAvatar', me.name, 64, true);
 }
 
 async function uploadAvatar() {
@@ -973,6 +1010,8 @@ async function uploadAvatar() {
     if (error) throw new Error(error.message);
     if (data.status === 'error') { btn.disabled = false; msg.innerHTML = '<div class="msg merr">' + data.message + '</div>'; return; }
     playerAvatars[me.name] = avatarUrl;
+    applyAvatar('profAvatar', me.name, 64, true);
+    applyAvatar('ubAvatar', me.name, 24, false);
     msg.innerHTML = '<div class="msg mok">✅ Fotka uložená!</div>';
     btn.disabled = false;
   } catch (e) {
@@ -1007,7 +1046,9 @@ function showPage(id) {
 function showApp() {
   document.getElementById('loginPage').style.display = 'none';
   document.getElementById('mainHeader').style.display = 'flex';
-  document.getElementById('ubadge').textContent = '👤 ' + me.name;
+  const ub = document.getElementById('ubadge');
+  ub.innerHTML = avatarPlaceholderHtml('ubAvatar', me.name, 24) + '<span>' + me.name + '</span>';
+  applyAvatar('ubAvatar', me.name, 24, false);
   showPage('gamePage');
   checkPendingApprovals();
 }
