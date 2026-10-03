@@ -777,10 +777,9 @@ async function applyAvatar(id, name, size, enlargeable) {
 function openImageLightbox(url) {
   const box = document.createElement('div');
   box.className = 'gal-lightbox';
-  box.innerHTML = '<img src="' + url + '" alt=""><button class="gal-lightbox-close" type="button">✕</button>';
-  box.addEventListener('click', function (e) {
-    if (e.target === box || e.target.classList.contains('gal-lightbox-close')) box.remove();
-  });
+  box.innerHTML = '<img src="' + url + '" alt="" style="cursor:zoom-out"><button class="gal-lightbox-close" type="button">✕</button>';
+  // klik kdekoľvek (aj na samotnú fotku) zatvorí náhľad, nech netreba trafiť krížik
+  box.addEventListener('click', function () { box.remove(); });
   function onKey(e) {
     if (!document.body.contains(box)) { document.removeEventListener('keydown', onKey); return; }
     if (e.key === 'Escape') box.remove();
